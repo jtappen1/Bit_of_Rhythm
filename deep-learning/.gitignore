@@ -1,4 +1,5 @@
 data
 runs
 yolov8n.pt
+yolov8n-pose.pt
 saved_frames

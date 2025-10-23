@@ -55,7 +55,7 @@ def record_and_playback(duration_seconds=5, fps=30):
     paused = True
 
     # Create folder for saved frames
-    save_folder = "saved_frames"
+    save_folder = f"saved_frames _{time.time()}"
     if not os.path.exists(save_folder):
         os.makedirs(save_folder)
 

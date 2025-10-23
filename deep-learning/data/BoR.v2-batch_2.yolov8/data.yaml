@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 1
+names: ['Drumstick-Heads']
+
+roboflow:
+  workspace: john-tappen-workspace
+  project: bor-9lzla
+  version: 2
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/john-tappen-workspace/bor-9lzla/dataset/2
