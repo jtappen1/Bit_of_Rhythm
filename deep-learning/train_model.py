@@ -90,8 +90,7 @@ def inference():
                     cv2.circle(frame, center=(rx, ry), radius=20, color= (0, 255 , 0), thickness=-1)
                     right_wrist_coords = (rx, ry)
 
-        results = model(frame, stream=True, verbose=False) # verbose=False to clean up console
-
+        results = model(frame, stream=True, verbose=False) 
         for r in results:
             boxes = r.boxes.xyxy.cpu().numpy()
             confs = r.boxes.conf.cpu().numpy()
