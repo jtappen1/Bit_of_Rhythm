@@ -1,3 +1,4 @@
+import math
 import os
 import cv2
 import numpy as np
@@ -5,6 +6,16 @@ from ultralytics import YOLO
 import time
 import csv
 from tkinter import filedialog
+from kalman_filter import KalmanTracker
+from enum import Enum
+from collections import deque
+
+COLOR_RIGHT = (0,0,255)
+COLOR_LEFT = (0,255,0)
+
+class StickTip(Enum):
+    LEFT = 0
+    RIGHT = 1
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
@@ -173,14 +184,10 @@ class StickTracker:
             left_wrist_coords: tuple (x, y) or None for left wrist position
             right_wrist_coords: tuple (x, y) or None for right wrist position
             center_coords: np.array [x, y] for drumstick center
-        
-        Returns:
-            tuple: (left_distance, right_distance) - distances in pixels, 
-                   inf if wrist not detected
         """
         left_dist = np.linalg.norm(left_wrist_coords - center_coords) if left_wrist_coords is not None else float('inf')
         right_dist = np.linalg.norm(right_wrist_coords - center_coords) if right_wrist_coords is not None else float('inf')
-        self.distances[idx] = (left_dist, right_dist)
+        self.distances[idx] = (left_dist, right_dist, center_coords[0], center_coords[1])
     
     def get_min_distances(self):
         """
@@ -196,6 +203,91 @@ class StickTracker:
     
     def get_distances(self, key):
         return self.distances[key]
+    
+
+class VelocityTracker:
+    # Note: This needs some work, I want to end tracking after X frames or no  update, etc.
+
+    def __init__(self, hit_cooldown = 3):
+        self.left_tracker = None
+        self.right_tracker = None
+        self.history = {
+            StickTip.LEFT: deque(maxlen=5),
+            StickTip.RIGHT: deque(maxlen=5)
+        }
+        self.last_hit_time = {StickTip.LEFT: 0, StickTip.RIGHT: 0}
+        self.hit_cooldown = hit_cooldown
+        self.cooldown = {
+            StickTip.LEFT: 0,
+            StickTip.RIGHT: 0 
+        }
+
+    def start_tracker(self, tip: StickTip, xy: tuple[float, float]):
+        if tip == StickTip.LEFT and not self.left_tracker:
+            self.left_tracker = KalmanTracker(xy)
+        if tip == StickTip.RIGHT and not self.right_tracker:
+            self.right_tracker = KalmanTracker(xy)
+    
+    def update(self, tip: StickTip, xy: tuple[float, float]):
+        self.start_tracker(tip=tip, xy=xy)
+        tracker = self.left_tracker if tip == StickTip.LEFT else self.right_tracker
+        tracker.update(xy)
+        x, y = tracker.get_position()
+        self.history[tip].append((x, y))
+
+    def detect_hit(self, frame, tip: StickTip):
+        history = list(self.history[tip])
+        if len(history) < 4:
+            return False
+
+        xy2, xy1, xy0 = history[-3], history[-2], history[-1]
+        
+        dx_v1 = xy1[0] - xy2[0]
+        dy_v1 = xy1[1] - xy2[1]
+        angle1 = math.atan2(dy_v1, dx_v1)  
+        angle_deg1 = math.degrees(angle1)
+
+        dx_v2 = xy0[0] - xy1[0]
+        dy_v2 = xy0[1] - xy1[1]
+        angle2 = math.atan2(dy_v2, dx_v2)  
+        angle_deg2 = math.degrees(angle2)
+
+        # Blue Arrow x2 -> x1
+        cv2.arrowedLine(frame, (int(xy2[0]), int(xy2[1])), (int(xy1[0]), int(xy1[1])), (255,0,0), 2, tipLength=0.3)
+
+        # White Current Arrow x1 -> x_curr
+        cv2.arrowedLine(frame, (int(xy1[0]), int(xy1[1])), (int(xy0[0]), int(xy0[1])), (255,255,255), 2, tipLength=0.3)
+
+        if  (0 <= angle_deg1 < 180) and (-180 <= angle_deg2 <= -1):
+            if self.cooldown[tip] == 0:
+                self.cooldown[tip] = self.hit_cooldown + 1
+                return True
+            
+        if self.cooldown[tip] != 0:
+            self.cooldown[tip] -= 1
+
+        return False
+    
+    def predict(self):
+        if self.left_tracker:
+            self.left_tracker.predict()
+        if self.right_tracker:
+            self.right_tracker.predict()
+    
+    def annotate_direction(self, frame, tip: StickTip, color=(255, 255, 255)):
+        tracker = self.left_tracker if tip == StickTip.LEFT else self.right_tracker
+        x, y = tracker.get_position()
+        vx, vy = tracker.get_velocity()
+        end_x = int(x + vx * 5)
+        end_y = int(y + vy * 5)
+        cv2.arrowedLine(frame, (int(x), int(y)), (end_x, end_y), color, 2, tipLength=0.3)
+         
+        if self.detect_hit(frame, tip):
+            cv2.circle(frame, (int(x), int(y)), 20, (0, 255, 0), 4)
+            cv2.putText(frame, "HIT!", (int(x) - 20, int(y) - 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 3)
+
+        return frame
     
 
 def annotate_bounding_box(frame, bounding_box, class_name, conf, velocity, color):
@@ -238,6 +330,7 @@ def inference():
     """
     model = YOLO("/Users/jtappen/Projects/Bit_of_Rhythm/deep-learning/weights/test1/best.pt")
     stick_tracker = StickTracker()
+    velocity_tracker = VelocityTracker()
 
     video_path = select_video_file()
     cap = cv2.VideoCapture(video_path)
@@ -340,18 +433,33 @@ def inference():
 
         # If same box is closest to both wrists, assign to the closer one
         if left_index == right_index:
-            left_dist, right_dist = stick_tracker.get_distances(left_index)
-            label = "left" if left_dist <= right_dist else "right"
-            color = (0, 255, 0) if left_dist <= right_dist else (0, 0, 255)
-            frame = annotate_bounding_box(frame, merged_boxes[left_index], label, 
+            left_dist, right_dist, center_x, center_y = stick_tracker.get_distances(left_index)
+            tip = StickTip.LEFT if left_dist <= right_dist else StickTip.RIGHT
+            color = COLOR_LEFT if left_dist <= right_dist else COLOR_RIGHT
+            frame = annotate_bounding_box(frame, merged_boxes[left_index], StickTip(tip).name, 
                                         merged_confs[left_index], 0.0, color)
+            # Update respective Kalman Filter
+            velocity_tracker.update(tip=tip, xy=(center_x, center_y))
+            frame = velocity_tracker.annotate_direction(frame, tip, color)
+
         else:
             # Annotate both drumsticks
-            frame = annotate_bounding_box(frame, merged_boxes[left_index], "left", 
-                                        merged_confs[left_index], 0.0, (0, 255, 0))
-            frame = annotate_bounding_box(frame, merged_boxes[right_index], "right", 
-                                        merged_confs[right_index], 0.0, (0, 0, 255))
+            frame = annotate_bounding_box(frame, merged_boxes[left_index], StickTip.LEFT.name, 
+                                        merged_confs[left_index], 0.0, COLOR_LEFT)
+            frame = annotate_bounding_box(frame, merged_boxes[right_index], StickTip.RIGHT.name, 
+                                        merged_confs[right_index], 0.0, COLOR_RIGHT)
             
+            # Update KF for both left and right drumsticks
+            left_dist, right_dist, center_x, center_y = stick_tracker.get_distances(left_index)
+            velocity_tracker.update(tip=StickTip.LEFT, xy=(center_x, center_y))
+            frame = velocity_tracker.annotate_direction(frame, StickTip.LEFT, COLOR_LEFT)
+
+            left_dist, right_dist, center_x, center_y = stick_tracker.get_distances(right_index)
+            velocity_tracker.update(tip=StickTip.RIGHT, xy=(center_x, center_y))
+            frame = velocity_tracker.annotate_direction(frame, StickTip.RIGHT, COLOR_RIGHT)
+        
+        velocity_tracker.predict()
+        
         # --- 3. Display and Exit (Unchanged) ---
         cv2.imshow("YOLOv8 Live", frame)
         frame_count += 1
