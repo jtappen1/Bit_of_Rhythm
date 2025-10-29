@@ -3,7 +3,7 @@ import os
 
 # --- Configuration ---
 # 1. REPLACE THIS WITH THE ACTUAL PATH TO YOUR VIDEO FILE
-VIDEO_FILE_PATH = 'Video Examples\\train\\dark-surface-fast-2.mov' 
+VIDEO_FILE_PATH = 'Video Examples\\train\\far-light-surface-fast-2.mov' 
 # 2. Directory where the extracted frames will be saved
 OUTPUT_DIR = 'data\\training_frames'
 # 3. Frame extraction interval (e.g., 15 means every 15th frame)
@@ -58,7 +58,7 @@ def extract_frames(video_path, output_dir, interval):
             # Save the frame as a JPEG image
             cv2.imwrite(frame_filename, frame)
             saved_count += 1
-            print(f"Saved {frame_filename}")
+            # print(f"Saved {frame_filename}")
 
         # Increment the frame counter
         frame_count += 1

@@ -5,6 +5,8 @@ from ultralytics import YOLO
 import time
 import csv
 from tkinter import filedialog
+from opticalFlow import OpticalFlowTracker
+
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
@@ -198,7 +200,7 @@ class StickTracker:
         return self.distances[key]
     
 
-def annotate_bounding_box(frame, bounding_box, class_name, conf, velocity, color):
+def annotate_bounding_box(frame, bounding_box, class_name, conf, speed, color):
     """
     Draw a bounding box with label on the frame.
     
@@ -207,14 +209,14 @@ def annotate_bounding_box(frame, bounding_box, class_name, conf, velocity, color
         box: list of bounding box coordinates [x1, y1, x2, y2]
         class_name: Label text (e.g., "left", "right")
         conf: Confidence score
-        velocity: Velocity in pixels per second (CURRENTLY ZERO)
+        speed: in pixels per frame
         color: BGR color tuple for the box and text
     
     Returns:
         Annotated frame
     """
     x1, y1, x2, y2 = map(int, bounding_box)
-    label_text = f"{class_name} Conf:{conf:.2f} Vel:{velocity:.2f} p/s"
+    label_text = f"{class_name} Conf:{conf:.2f} Speed:{speed:.2f} p/s"
     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
     cv2.putText(frame, label_text, (x1, y1 - 10),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
@@ -229,31 +231,31 @@ def inference():
     2. Detect wrist positions using YOLO pose estimation
     3. Merge overlapping detections
     4. Assign left/right labels based on wrist proximity
-    5. Calculate and log velocities to CSV
+    5. Calculate and log speed(s) to CSV
     6. Display annotated video with frame-by-frame navigation
     
     Controls:
         - 'q': Quit
         - Any other key: Next frame
     """
-    model = YOLO("/Users/jtappen/Projects/Bit_of_Rhythm/deep-learning/weights/test1/best.pt")
+    model = YOLO("deep-learning\\weights\\test1\\best.pt")
     stick_tracker = StickTracker()
 
     video_path = select_video_file()
     cap = cv2.VideoCapture(video_path)
 
-    # Tracking setup
-    # Stores {class_id: {'center': (x, y), 'time': timestamp}}
+    # Speed tracking dictionary
+    # Stores {class_id: prev_y}
     last_positions = {}
     
     # CSV file setup
-    csv_filename = "box_velocities.csv"
+    '''csv_filename = "box_velocities.csv"
     with open(csv_filename, mode='w', newline='') as file:
         writer = csv.writer(file)
         # Write header row
         writer.writerow(['Timestamp', 'Class_ID', 'Label', 'Velocity (pixels/sec)'])
 
-    print(f"Tracking velocities and saving to {csv_filename}...")
+    print(f"Tracking velocities and saving to {csv_filename}...")'''
     
     frame_count = 0
     start_time = time.time() # To keep track of the overall runtime
@@ -263,7 +265,10 @@ def inference():
         if not ret:
             break
         
-        current_time = time.time()
+        # For optical flow
+        frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        flow_trackers = {}
+        optical_flow_speeds = {}
 
         results = model(frame, stream=True, verbose=False)
         left_wrist_coords, right_wrist_coords, frame = stick_tracker.get_wrist_coords(frame=frame)
@@ -286,8 +291,7 @@ def inference():
         all_confs = np.hstack(all_confs)
         all_classes = np.hstack(all_classes)
 
-        merged_boxes, merged_confs, merged_classes = merge_touching_boxes(all_boxes, all_confs, all_classes)
-          
+        merged_boxes, merged_confs, merged_classes = merge_touching_boxes(all_boxes, all_confs, all_classes) 
         for idx, (box, conf, cls) in enumerate(zip(merged_boxes, merged_confs, merged_classes)):
             x1, y1, x2, y2 = map(int, box)
             cls_id = int(cls)
@@ -309,48 +313,60 @@ def inference():
                 center_coords=center_coords,
                 idx=idx
             )
-            
-            # NOTE: This will no longer work.
-            velocity = 0.0
-            
+
+            if cls_id not in flow_trackers:
+                flow_trackers[cls_id] = OpticalFlowTracker(box, frame_gray)
+
+            speed = flow_trackers[cls_id].update(box, frame_gray)
+            optical_flow_speeds[cls_id] = speed
+
+            # FOLLOWING BIG COMMENT IS FOR CENTROID SPEED --> NOT GOOD
+            '''
+            # stores [leftSpeed, rightSpeed]
+            centroid_speed = [0,0]
+            # Speed calculation using centroids
             if cls_id in last_positions:
                 # Retrieve previous data
-                prev_center = last_positions[cls_id]['center']
-                prev_time = last_positions[cls_id]['time']
+                prev_y = last_positions[cls_id]
+
+                # We're only interested in the distance traveled in the y-direction.
+                # Larger y is further down the screen
+                # When the drumstick hits the surface, the y will change from growing to shrinking
+
+
+                # Speed in pixels per frame
+                speed = y_center - prev_y
+                centroid_speed[cls_id] = speed
                 
-                time_diff = current_time - prev_time
-                
-                if time_diff > 0:
-                    # Calculate Euclidean distance between centers (in pixels)
-                    distance = np.linalg.norm(center_coords - prev_center)
-                    # Velocity in pixels per second
-                    velocity = distance / time_diff
-                    
-                    # Write to CSV
-                    with open(csv_filename, mode='a', newline='') as file:
-                        writer = csv.writer(file)
-                        writer.writerow([f"{current_time - start_time:.4f}", cls_id, label, f"{velocity:.2f}"])
+                # Write to CSV
+                with open(csv_filename, mode='a', newline='') as file:
+                    writer = csv.writer(file)
+                    writer.writerow([f"{current_time - start_time:.4f}", cls_id, label, f"{speed:.2f}"])
                         
             # Update last position for the current class ID
-            last_positions[cls_id] = {'center': center_coords, 'time': current_time}
+            last_positions[cls_id] = y_center'''
 
        # Get box indices for left and right drumsticks. This will correspond to the merged boxes, 
        # letting us know which boxes are closest to which wrist.
         left_index, right_index = stick_tracker.get_min_distances()
 
+        left_speed = optical_flow_speeds.get(left_index, 0.0)
+        right_speed = optical_flow_speeds.get(right_index, 0.0)
+
+        
         # If same box is closest to both wrists, assign to the closer one
         if left_index == right_index:
             left_dist, right_dist = stick_tracker.get_distances(left_index)
             label = "left" if left_dist <= right_dist else "right"
             color = (0, 255, 0) if left_dist <= right_dist else (0, 0, 255)
             frame = annotate_bounding_box(frame, merged_boxes[left_index], label, 
-                                        merged_confs[left_index], 0.0, color)
+                                        merged_confs[left_index], np.inf, color) # If we can't differentiate, assign speed to inf. for transcription algorithm
         else:
             # Annotate both drumsticks
             frame = annotate_bounding_box(frame, merged_boxes[left_index], "left", 
-                                        merged_confs[left_index], 0.0, (0, 255, 0))
+                                        merged_confs[left_index], left_speed, (0, 255, 0))
             frame = annotate_bounding_box(frame, merged_boxes[right_index], "right", 
-                                        merged_confs[right_index], 0.0, (0, 0, 255))
+                                        merged_confs[right_index], right_speed, (0, 0, 255))
             
         # --- 3. Display and Exit (Unchanged) ---
         cv2.imshow("YOLOv8 Live", frame)
