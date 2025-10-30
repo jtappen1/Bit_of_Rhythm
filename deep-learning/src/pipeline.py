@@ -6,7 +6,7 @@ import time
 import csv
 from tkinter import filedialog
 from opticalFlow import OpticalFlowTracker
-
+from transcription import transcribe
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
@@ -244,9 +244,12 @@ def inference():
     video_path = select_video_file()
     cap = cv2.VideoCapture(video_path)
     
+    total_frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     frame_count = 0
 
-    distance_from_top = {}
+
+    # For each frame, store [left_stick_y, right_stick_y]
+    distance_from_top = np.zeros(shape=(total_frame_count, 2))
 
     while True:
         ret, frame = cap.read()
@@ -300,16 +303,13 @@ def inference():
 
 
             # Distance save
-            distance_from_top[cls_id] = y_center
+            distance_from_top[frame_count][cls_id] = y_center
             
 
 
        # Get box indices for left and right drumsticks. This will correspond to the merged boxes, 
        # letting us know which boxes are closest to which wrist.
         left_index, right_index = stick_tracker.get_min_distances()
-
-        left_stick_y_coord = distance_from_top.get(left_index, 0.0)
-        right_stick_y_coord = distance_from_top.get(right_index, 0.0)
 
 
         # TODO: add code to save
@@ -325,9 +325,9 @@ def inference():
         else:
             # Annotate both drumsticks
             frame = annotate_bounding_box(frame, merged_boxes[left_index], "left", 
-                                        merged_confs[left_index], left_stick_y_coord, (0, 255, 0))
+                                        merged_confs[left_index], 0, (0, 255, 0))
             frame = annotate_bounding_box(frame, merged_boxes[right_index], "right", 
-                                        merged_confs[right_index], right_stick_y_coord, (0, 0, 255))
+                                        merged_confs[right_index], 0, (0, 0, 255))
             
         # --- 3. Display and Exit (Unchanged) ---
         cv2.imshow("YOLOv8 Live", frame)
@@ -339,6 +339,9 @@ def inference():
 
     cap.release()
     cv2.destroyAllWindows()
+
+    # Run transcription
+    transcribe(data=distance_from_top)
 
 
 if __name__ == "__main__":

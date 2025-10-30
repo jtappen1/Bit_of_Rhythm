@@ -1,4 +1,6 @@
 import numpy as np
+import matplotlib.pyplot as plt
+
 
 def transcribe(data : np.ndarray) :
     '''
@@ -22,11 +24,15 @@ def transcribe(data : np.ndarray) :
 
     # Want to consider distribution of y values and take the top whatever % as hits on the table. 
 
-    
+    # Visualize
+    plt.scatter(data[:, 0])
+    plt.title("Y-Coordinate for Left Stick")
+    plt.xlabel("Frame")
+    plt.ylabel("Vertical distance from y=0 (frame)")
+    plt.show()
 
-a = np.array([
-    [1,1],
-    [2,3],
-    [4,5]])
-
-transcribe(a)
+    plt.scatter(data[:, 1])
+    plt.title("Y-Coordinate for Right Stick")
+    plt.xlabel("Frame")
+    plt.ylabel("Vertical distance from y=0 (frame)")
+    plt.show()
