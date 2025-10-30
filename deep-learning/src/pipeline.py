@@ -260,6 +260,9 @@ def inference():
        # letting us know which boxes are closest to which wrist.
         left_index, right_index = stick_tracker.get_min_distances()
 
+        if left_index is None and right_index is None:
+            continue
+
         left_speed = optical_flow_speeds.get(left_index, 0.0)
         right_speed = optical_flow_speeds.get(right_index, 0.0)
 

@@ -88,9 +88,12 @@ class StickTracker:
             tuple: (min_left_key, min_right_key) - indices of drumsticks closest to 
                    left and right wrists respectively
         """
-        min_left_key = min(self.distances, key=lambda k: self.distances[k][0])
-        min_right_key = min(self.distances, key=lambda k: self.distances[k][1])
-        return min_left_key, min_right_key
+        if self.distances:
+            min_left_key = min(self.distances, key=lambda k: self.distances[k][0])
+            min_right_key = min(self.distances, key=lambda k: self.distances[k][1])
+            return min_left_key, min_right_key
+        else:
+            return None, None
     
     def get_distances(self, key):
         return self.distances[key]
