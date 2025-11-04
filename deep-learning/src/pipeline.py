@@ -3,10 +3,13 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 import time
-import csv
 from tkinter import filedialog
 from opticalFlow import OpticalFlowTracker
+from trackers import VelocityTracker, StickTracker, StickTip
 from transcription import transcribe
+
+COLOR_RIGHT = (0,0,255)
+COLOR_LEFT = (0,255,0)
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
@@ -109,97 +112,7 @@ def merge_touching_boxes(boxes, confs=None, classes=None):
         merged_classes = np.array(merged_classes)
 
     return merged_boxes, merged_confs, merged_classes
-
-class StickTracker:
-    """
-    Tracks drumstick positions and assigns left/right labels based on wrist proximity.
-    Uses YOLO pose estimation to detect wrists and calculate distances to drumstick centers.
-    """
-    def __init__(self):
-        self.model = YOLO('yolov8n-pose.pt')
-        self.left_tip = False
-        self.right_tip = False
-        self.distances = {}
     
-    def reset_state(self):
-        """Reset tracking state for a new frame."""
-        self.left_tip = False
-        self.right_tip = False
-        self.distances = {}
-
-    def get_wrist_coords(self, frame):
-        """
-        Detect and annotate wrist coordinates using pose estimation.
-        
-        Args:
-            frame: Video frame to process (numpy array)
-        
-        Returns:
-            tuple: (right_wrist_coords, left_wrist_coords, annotated_frame)
-                - right_wrist_coords: tuple (x, y) or None if not detected
-                - left_wrist_coords: tuple (x, y) or None if not detected
-                - annotated_frame: Frame with wrist circles drawn
-        """
-        self.reset_state()
-
-        poses = self.model(frame, verbose=False)
-
-        left_wrist_coords: tuple | None  = None
-        right_wrist_coords: tuple | None = None
-
-        for pose in poses:
-            if pose.keypoints:
-                keypoints = pose.keypoints.xy.cpu().numpy()
-                confs = pose.keypoints.conf.cpu().numpy()
-                
-                lx, ly = map(int, keypoints[0][9]) # Left Wrist
-                rx, ry = map(int, keypoints[0][10]) # Right Wrist
-                l_conf = confs[0][9]
-                r_conf = confs[0][10]
-                
-                if l_conf > 0.5:
-                    cv2.circle(frame, center=(lx, ly), radius=20, color= (0, 0 , 255), thickness=-1)
-                    left_wrist_coords = (lx, ly)
-                    
-                if r_conf > 0.5:
-                    cv2.circle(frame, center=(rx, ry), radius=20, color= (0, 255 , 0), thickness=-1)
-                    right_wrist_coords = (rx, ry)
-
-        return right_wrist_coords, left_wrist_coords, frame
-    
-    def determine_tip_distances(self, left_wrist_coords, right_wrist_coords, center_coords, idx) -> None:
-        """
-        Calculate Euclidean distances from drumstick center to each wrist.
-        
-        Args:
-            left_wrist_coords: tuple (x, y) or None for left wrist position
-            right_wrist_coords: tuple (x, y) or None for right wrist position
-            center_coords: np.array [x, y] for drumstick center
-        
-        Returns:
-            tuple: (left_distance, right_distance) - distances in pixels, 
-                   inf if wrist not detected
-        """
-        left_dist = np.linalg.norm(left_wrist_coords - center_coords) if left_wrist_coords is not None else float('inf')
-        right_dist = np.linalg.norm(right_wrist_coords - center_coords) if right_wrist_coords is not None else float('inf')
-        self.distances[idx] = (left_dist, right_dist)
-    
-    def get_min_distances(self):
-        """
-        Find which drumstick (by index) is closest to each wrist.
-        
-        Returns:
-            tuple: (min_left_key, min_right_key) - indices of drumsticks closest to 
-                   left and right wrists respectively
-        """
-        min_left_key = min(self.distances, key=lambda k: self.distances[k][0])
-        min_right_key = min(self.distances, key=lambda k: self.distances[k][1])
-        return min_left_key, min_right_key
-    
-    def get_distances(self, key):
-        return self.distances[key]
-    
-
 def annotate_bounding_box(frame, bounding_box, class_name, conf, speed, color):
     """
     Draw a bounding box with label on the frame.
@@ -240,6 +153,7 @@ def inference():
     """
     model = YOLO("deep-learning\\weights\\test1\\best.pt")
     stick_tracker = StickTracker()
+    velocity_tracker = VelocityTracker()
 
     video_path = select_video_file()
     cap = cv2.VideoCapture(video_path)
@@ -311,17 +225,20 @@ def inference():
        # letting us know which boxes are closest to which wrist.
         left_index, right_index = stick_tracker.get_min_distances()
 
-
-        # TODO: add code to save
-        # For each frame: [left_stick_y_coord, right_stick_y_coord]
+        if left_index is None and right_index is None:
+            continue
 
         # If same box is closest to both wrists, assign to the closer one
         if left_index == right_index:
-            left_dist, right_dist = stick_tracker.get_distances(left_index)
-            label = "left" if left_dist <= right_dist else "right"
-            color = (0, 255, 0) if left_dist <= right_dist else (0, 0, 255)
-            frame = annotate_bounding_box(frame, merged_boxes[left_index], label, 
-                                        merged_confs[left_index], np.inf, color) # If we can't differentiate, assign speed to inf. for transcription algorithm
+            left_dist, right_dist, center_x, center_y = stick_tracker.get_distances(left_index)
+            tip = StickTip.LEFT if left_dist <= right_dist else StickTip.RIGHT
+            color = COLOR_LEFT if left_dist <= right_dist else COLOR_RIGHT
+            frame = annotate_bounding_box(frame, merged_boxes[left_index], StickTip(tip).name, 
+                                        merged_confs[left_index], np.inf, color)
+            # Update respective Kalman Filter
+            velocity_tracker.update(tip=tip, xy=(center_x, center_y))
+            frame = velocity_tracker.annotate_direction(frame, tip, color)
+
         else:
             # Annotate both drumsticks
             frame = annotate_bounding_box(frame, merged_boxes[left_index], "left", 
@@ -329,6 +246,17 @@ def inference():
             frame = annotate_bounding_box(frame, merged_boxes[right_index], "right", 
                                         merged_confs[right_index], 0, (0, 0, 255))
             
+            # Update KF for both left and right drumsticks
+            left_dist, right_dist, center_x, center_y = stick_tracker.get_distances(left_index)
+            velocity_tracker.update(tip=StickTip.LEFT, xy=(center_x, center_y))
+            frame = velocity_tracker.annotate_direction(frame, StickTip.LEFT, COLOR_LEFT)
+
+            left_dist, right_dist, center_x, center_y = stick_tracker.get_distances(right_index)
+            velocity_tracker.update(tip=StickTip.RIGHT, xy=(center_x, center_y))
+            frame = velocity_tracker.annotate_direction(frame, StickTip.RIGHT, COLOR_RIGHT)
+        
+        velocity_tracker.predict()
+        
         # --- 3. Display and Exit (Unchanged) ---
         cv2.imshow("YOLOv8 Live", frame)
         frame_count += 1
