@@ -6,6 +6,7 @@ import time
 from tkinter import filedialog
 from opticalFlow import OpticalFlowTracker
 from trackers import VelocityTracker, StickTracker, StickTip
+from transcription import transcribe
 
 COLOR_RIGHT = (0,0,255)
 COLOR_LEFT = (0,255,0)
@@ -156,29 +157,19 @@ def inference():
 
     video_path = select_video_file()
     cap = cv2.VideoCapture(video_path)
-
     
-    # CSV file setup
-    '''csv_filename = "box_velocities.csv"
-    with open(csv_filename, mode='w', newline='') as file:
-        writer = csv.writer(file)
-        # Write header row
-        writer.writerow(['Timestamp', 'Class_ID', 'Label', 'Velocity (pixels/sec)'])
-
-    print(f"Tracking velocities and saving to {csv_filename}...")'''
-    
+    total_frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     frame_count = 0
-    start_time = time.time() # To keep track of the overall runtime
+
+
+    # For each frame, store [left_stick_y, right_stick_y]
+    distance_from_top = np.zeros(shape=(total_frame_count, 2))
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
         
-        # For optical flow
-        frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        flow_trackers = {}
-        optical_flow_speeds = {}
 
         results = model(frame, stream=True, verbose=False)
         left_wrist_coords, right_wrist_coords, frame = stick_tracker.get_wrist_coords(frame=frame)
@@ -224,37 +215,11 @@ def inference():
                 idx=idx
             )
 
-            if cls_id not in flow_trackers:
-                flow_trackers[cls_id] = OpticalFlowTracker(box, frame_gray)
 
-            speed = flow_trackers[cls_id].update(box, frame_gray)
-            optical_flow_speeds[cls_id] = speed
+            # Distance save
+            distance_from_top[frame_count][cls_id] = y_center
+            
 
-            # FOLLOWING BIG COMMENT IS FOR CENTROID SPEED --> NOT GOOD
-            '''
-            # stores [leftSpeed, rightSpeed]
-            centroid_speed = [0,0]
-            # Speed calculation using centroids
-            if cls_id in last_positions:
-                # Retrieve previous data
-                prev_y = last_positions[cls_id]
-
-                # We're only interested in the distance traveled in the y-direction.
-                # Larger y is further down the screen
-                # When the drumstick hits the surface, the y will change from growing to shrinking
-
-
-                # Speed in pixels per frame
-                speed = y_center - prev_y
-                centroid_speed[cls_id] = speed
-                
-                # Write to CSV
-                with open(csv_filename, mode='a', newline='') as file:
-                    writer = csv.writer(file)
-                    writer.writerow([f"{current_time - start_time:.4f}", cls_id, label, f"{speed:.2f}"])
-                        
-            # Update last position for the current class ID
-            last_positions[cls_id] = y_center'''
 
        # Get box indices for left and right drumsticks. This will correspond to the merged boxes, 
        # letting us know which boxes are closest to which wrist.
@@ -262,9 +227,6 @@ def inference():
 
         if left_index is None and right_index is None:
             continue
-
-        left_speed = optical_flow_speeds.get(left_index, 0.0)
-        right_speed = optical_flow_speeds.get(right_index, 0.0)
 
         # If same box is closest to both wrists, assign to the closer one
         if left_index == right_index:
@@ -279,10 +241,10 @@ def inference():
 
         else:
             # Annotate both drumsticks
-            frame = annotate_bounding_box(frame, merged_boxes[left_index], StickTip.LEFT.name, 
-                                        merged_confs[left_index], left_speed, COLOR_LEFT)
-            frame = annotate_bounding_box(frame, merged_boxes[right_index], StickTip.RIGHT.name, 
-                                        merged_confs[right_index], right_speed, COLOR_RIGHT)
+            frame = annotate_bounding_box(frame, merged_boxes[left_index], "left", 
+                                        merged_confs[left_index], 0, (0, 255, 0))
+            frame = annotate_bounding_box(frame, merged_boxes[right_index], "right", 
+                                        merged_confs[right_index], 0, (0, 0, 255))
             
             # Update KF for both left and right drumsticks
             left_dist, right_dist, center_x, center_y = stick_tracker.get_distances(left_index)
@@ -305,6 +267,9 @@ def inference():
 
     cap.release()
     cv2.destroyAllWindows()
+
+    # Run transcription
+    transcribe(data=distance_from_top)
 
 
 if __name__ == "__main__":
