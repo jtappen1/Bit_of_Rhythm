@@ -2,9 +2,7 @@ import os
 import cv2
 import numpy as np
 from ultralytics import YOLO
-import time
 from tkinter import filedialog
-from opticalFlow import OpticalFlowTracker
 from trackers import VelocityTracker, StickTracker, StickTip
 from transcription import transcribe
 
@@ -151,12 +149,17 @@ def inference():
         - 'q': Quit
         - Any other key: Next frame
     """
-    model = YOLO("deep-learning\\weights\\test1\\best.pt")
-    stick_tracker = StickTracker()
-    velocity_tracker = VelocityTracker()
+
+
+    
+    model = YOLO("/Users/jtappen/Projects/Bit_of_Rhythm/deep-learning/weights/test1/best.pt")
 
     video_path = select_video_file()
     cap = cv2.VideoCapture(video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+
+    stick_tracker = StickTracker()
+    velocity_tracker = VelocityTracker(fps=fps)
     
     total_frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     frame_count = 0
@@ -165,11 +168,11 @@ def inference():
     # For each frame, store [left_stick_y, right_stick_y]
     distance_from_top = np.zeros(shape=(total_frame_count, 2))
 
+    frame_idx = 1
     while True:
         ret, frame = cap.read()
         if not ret:
             break
-        
 
         results = model(frame, stream=True, verbose=False)
         left_wrist_coords, right_wrist_coords, frame = stick_tracker.get_wrist_coords(frame=frame)
@@ -215,12 +218,9 @@ def inference():
                 idx=idx
             )
 
-
             # Distance save
             distance_from_top[frame_count][cls_id] = y_center
             
-
-
        # Get box indices for left and right drumsticks. This will correspond to the merged boxes, 
        # letting us know which boxes are closest to which wrist.
         left_index, right_index = stick_tracker.get_min_distances()
@@ -237,7 +237,7 @@ def inference():
                                         merged_confs[left_index], np.inf, color)
             # Update respective Kalman Filter
             velocity_tracker.update(tip=tip, xy=(center_x, center_y))
-            frame = velocity_tracker.annotate_direction(frame, tip, color)
+            frame = velocity_tracker.annotate_direction(frame, tip=tip, color=color, frame_idx=frame_idx)
 
         else:
             # Annotate both drumsticks
@@ -249,13 +249,14 @@ def inference():
             # Update KF for both left and right drumsticks
             left_dist, right_dist, center_x, center_y = stick_tracker.get_distances(left_index)
             velocity_tracker.update(tip=StickTip.LEFT, xy=(center_x, center_y))
-            frame = velocity_tracker.annotate_direction(frame, StickTip.LEFT, COLOR_LEFT)
+            frame = velocity_tracker.annotate_direction(frame, tip=StickTip.LEFT, color=COLOR_LEFT, frame_idx=frame_idx)
 
             left_dist, right_dist, center_x, center_y = stick_tracker.get_distances(right_index)
             velocity_tracker.update(tip=StickTip.RIGHT, xy=(center_x, center_y))
-            frame = velocity_tracker.annotate_direction(frame, StickTip.RIGHT, COLOR_RIGHT)
+            frame = velocity_tracker.annotate_direction(frame, tip=StickTip.RIGHT, color=COLOR_RIGHT, frame_idx=frame_idx)
         
         velocity_tracker.predict()
+        frame_idx += 1
         
         # --- 3. Display and Exit (Unchanged) ---
         cv2.imshow("YOLOv8 Live", frame)
@@ -268,9 +269,9 @@ def inference():
     cap.release()
     cv2.destroyAllWindows()
 
+    hit_timestamps = velocity_tracker.get_hit_timestamps()
     # Run transcription
     transcribe(data=distance_from_top)
-
 
 if __name__ == "__main__":
     inference()

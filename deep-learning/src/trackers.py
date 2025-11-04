@@ -101,7 +101,7 @@ class StickTracker:
 
 class VelocityTracker:
     # Note: This needs some work, I want to end tracking after X frames or no  update, etc.
-    def __init__(self, hit_cooldown = 3):
+    def __init__(self, hit_cooldown = 3, fps = 30):
         self.left_tracker = None
         self.right_tracker = None
         self.history = {
@@ -114,6 +114,10 @@ class VelocityTracker:
             StickTip.LEFT: 0,
             StickTip.RIGHT: 0 
         }
+        self.fps = fps
+        self.recording = False
+        self.starting_idx = 0
+        self.hits = []
 
     def start_tracker(self, tip: StickTip, xy: tuple[float, float]):
         if tip == StickTip.LEFT and not self.left_tracker:
@@ -167,17 +171,31 @@ class VelocityTracker:
         if self.right_tracker:
             self.right_tracker.predict()
     
-    def annotate_direction(self, frame, tip: StickTip, color=(255, 255, 255)):
+    def annotate_direction(self, frame, frame_idx,  tip: StickTip, color=(255, 255, 255) ):
         tracker = self.left_tracker if tip == StickTip.LEFT else self.right_tracker
         x, y = tracker.get_position()
         vx, vy = tracker.get_velocity()
         end_x = int(x + vx * 5)
         end_y = int(y + vy * 5)
         cv2.arrowedLine(frame, (int(x), int(y)), (end_x, end_y), color, 2, tipLength=0.3)
+
+        if self.recording:
+            time_s = (frame_idx - self.starting_idx) / self.fps
+            cv2.putText(frame,  f"{time_s}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 3)
          
         if self.detect_hit(frame, tip):
             cv2.circle(frame, (int(x), int(y)), 20, (0, 255, 0), 4)
             cv2.putText(frame, "HIT!", (int(x) - 20, int(y) - 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 3)
+            
+            if self.recording == False:
+                self.starting_idx = frame_idx
+                self.recording = True
+
+            time_s = (frame_idx - self.starting_idx) / self.fps
+            self.hits.append(time_s)
 
         return frame
+    
+    def get_hit_timestamps(self):
+        return self.hits
