@@ -149,10 +149,8 @@ def inference():
         - 'q': Quit
         - Any other key: Next frame
     """
-
-
     
-    model = YOLO("/Users/jtappen/Projects/Bit_of_Rhythm/deep-learning/weights/test1/best.pt")
+    model = YOLO("deep-learning\\weights\\test1\\best.pt")
 
     video_path = select_video_file()
     cap = cv2.VideoCapture(video_path)
@@ -164,11 +162,9 @@ def inference():
     total_frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     frame_count = 0
 
-
     # For each frame, store [left_stick_y, right_stick_y]
     distance_from_top = np.zeros(shape=(total_frame_count, 2))
 
-    frame_idx = 1
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -237,7 +233,7 @@ def inference():
                                         merged_confs[left_index], np.inf, color)
             # Update respective Kalman Filter
             velocity_tracker.update(tip=tip, xy=(center_x, center_y))
-            frame = velocity_tracker.annotate_direction(frame, tip=tip, color=color, frame_idx=frame_idx)
+            frame = velocity_tracker.annotate_direction(frame, tip=tip, color=color, frame_idx=frame_count)
 
         else:
             # Annotate both drumsticks
@@ -249,14 +245,13 @@ def inference():
             # Update KF for both left and right drumsticks
             left_dist, right_dist, center_x, center_y = stick_tracker.get_distances(left_index)
             velocity_tracker.update(tip=StickTip.LEFT, xy=(center_x, center_y))
-            frame = velocity_tracker.annotate_direction(frame, tip=StickTip.LEFT, color=COLOR_LEFT, frame_idx=frame_idx)
+            frame = velocity_tracker.annotate_direction(frame, tip=StickTip.LEFT, color=COLOR_LEFT, frame_idx=frame_count)
 
             left_dist, right_dist, center_x, center_y = stick_tracker.get_distances(right_index)
             velocity_tracker.update(tip=StickTip.RIGHT, xy=(center_x, center_y))
-            frame = velocity_tracker.annotate_direction(frame, tip=StickTip.RIGHT, color=COLOR_RIGHT, frame_idx=frame_idx)
+            frame = velocity_tracker.annotate_direction(frame, tip=StickTip.RIGHT, color=COLOR_RIGHT, frame_idx=frame_count)
         
         velocity_tracker.predict()
-        frame_idx += 1
         
         # --- 3. Display and Exit (Unchanged) ---
         cv2.imshow("YOLOv8 Live", frame)
