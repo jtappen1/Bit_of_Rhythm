@@ -1,15 +1,18 @@
 from enum import Enum
 import math
+from typing import Tuple
 import cv2
 import numpy as np
 from ultralytics import YOLO
 from kalman_filter import KalmanTracker
 from collections import deque
+from scipy.optimize import linear_sum_assignment
 
 class StickTip(Enum):
     LEFT = 0
     RIGHT = 1
 
+# ----------------------------------------------------- Unused Stick Tracking Class -------------------------------------------------------------------------
 class StickTracker:
     """
     Tracks drumstick positions and assigns left/right labels based on wrist proximity.
@@ -98,7 +101,7 @@ class StickTracker:
     def get_distances(self, key):
         return self.distances[key]
     
-
+# ----------------------------------------------------- Unused Velocity Tracking Class -------------------------------------------------------------------------
 class VelocityTracker:
     # Note: This needs some work, I want to end tracking after X frames or no  update, etc.
     def __init__(self, hit_cooldown = 3, fps = 30):
@@ -199,3 +202,83 @@ class VelocityTracker:
     
     def get_hit_timestamps(self):
         return self.hits
+        
+# ----------------------------------------------------- Tip Tracking Class -------------------------------------------------------------------------
+class TipTracker:
+    """
+    Dynamically Creates Kalman Filters to Track the different tips.
+
+    TODO:  
+    - Add minimum aging.
+    - Determine distance thresholds
+
+
+    """
+    def __init__(self, dist_thresh=400.0, max_age=10, min_age=3):
+        self.trackers = []
+        self.dist_thresh = dist_thresh
+        self.max_age = max_age
+
+    def predict(self):
+        """
+        Predict positions for all trackers
+        ."""
+        return [t.predict() for t in self.trackers]
+
+    def update(self, detections):
+        """
+        Update tracker states with new detections.
+
+        detections: list of (x, y) tuples
+        """
+        dets = [np.array(d) for d in detections]
+        N = len(self.trackers)
+        M = len(dets)
+
+        # No existing trackers -> create new ones
+        if N == 0:
+            for d in dets:
+                self.trackers.append(KalmanTracker(d))
+            return
+
+        # Build cost matrix (Euclidean distance)
+        preds = np.array([t.kf.statePre[:2,0].flatten() for t in self.trackers])
+        cost_matrix = np.zeros((N, M), dtype=float)
+        for i, p in enumerate(preds):
+            for j, d in enumerate(dets):
+                cost_matrix[i, j] = np.linalg.norm(p - d)
+
+        # Hungarian assignment
+        row_ind, col_ind = linear_sum_assignment(cost_matrix)
+
+        # Update matched trackers
+        matched_tr = set()
+        matched_det = set()
+        for i, j in zip(row_ind, col_ind):
+            if cost_matrix[i, j] < self.dist_thresh:
+                self.trackers[i].update(dets[j])
+                matched_tr.add(i)
+                matched_det.add(j)
+
+        # Create trackers for unmatched detections
+        for j in range(M):
+            if j not in matched_det:
+                self.trackers.append(KalmanTracker(dets[j]))
+
+        # Age unmatched trackers and remove old ones
+        to_remove = []
+        for i, t in enumerate(self.trackers):
+            if i not in matched_tr:
+                t.time_since_update += 1
+            if t.time_since_update > self.max_age:
+                to_remove.append(t)
+        for t in to_remove:
+            self.trackers.remove(t)
+
+    def detect_hits(self):
+        hits = set()
+        for tracker in self.trackers:
+            if tracker.detect_hit():
+                hits.add(tracker.id)
+        return hits
+

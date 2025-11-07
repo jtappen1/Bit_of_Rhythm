@@ -3,7 +3,9 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 from tkinter import filedialog
-from trackers import VelocityTracker, StickTracker, StickTip
+from annotate import Annotator
+import yaml
+from trackers import TipTracker
 from transcription import transcribe
 
 COLOR_RIGHT = (0,0,255)
@@ -25,7 +27,6 @@ def select_video_file():
             ("All files", "*.*")
         )
     )
-    
     return file_path
 
 def merge_touching_boxes(boxes, confs=None, classes=None):
@@ -110,30 +111,8 @@ def merge_touching_boxes(boxes, confs=None, classes=None):
         merged_classes = np.array(merged_classes)
 
     return merged_boxes, merged_confs, merged_classes
-    
-def annotate_bounding_box(frame, bounding_box, class_name, conf, speed, color):
-    """
-    Draw a bounding box with label on the frame.
-    
-    Args:
-        frame: Video frame to annotate
-        box: list of bounding box coordinates [x1, y1, x2, y2]
-        class_name: Label text (e.g., "left", "right")
-        conf: Confidence score
-        speed: in pixels per frame
-        color: BGR color tuple for the box and text
-    
-    Returns:
-        Annotated frame
-    """
-    x1, y1, x2, y2 = map(int, bounding_box)
-    label_text = f"{class_name} Conf:{conf:.2f} Speed:{speed:.2f} p/s"
-    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-    cv2.putText(frame, label_text, (x1, y1 - 10),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-    return frame
 
-def inference():
+def inference(config):
     """
     Main inference loop for drumstick detection and tracking.
     
@@ -150,14 +129,15 @@ def inference():
         - Any other key: Next frame
     """
     
-    model = YOLO("deep-learning\\weights\\test1\\best.pt")
+    model = YOLO("PATH")
 
     video_path = select_video_file()
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
 
-    stick_tracker = StickTracker()
-    velocity_tracker = VelocityTracker(fps=fps)
+    tip_tracker = TipTracker()
+    annotator = Annotator()
+    timestamps = []
     
     total_frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     frame_count = 0
@@ -169,19 +149,21 @@ def inference():
         ret, frame = cap.read()
         if not ret:
             break
-
+        
         results = model(frame, stream=True, verbose=False)
-        left_wrist_coords, right_wrist_coords, frame = stick_tracker.get_wrist_coords(frame=frame)
+
+        annotator.set_frame(frame)
         
         all_boxes, all_confs, all_classes = [], [], []
-
+        
+        # Get all boxes, confidences, and classes for each detected object
         for r in results:
             boxes = r.boxes.xyxy.cpu().numpy()
             confs = r.boxes.conf.cpu().numpy()
             classes = r.boxes.cls.cpu().numpy()
 
             # Filter by confidence threshold
-            mask = confs >= 0.35
+            mask = confs >= config["min_confidence"]
             all_boxes.append(boxes[mask])
             all_confs.append(confs[mask])
             all_classes.append(classes[mask])
@@ -191,82 +173,60 @@ def inference():
         all_confs = np.hstack(all_confs)
         all_classes = np.hstack(all_classes)
 
-        merged_boxes, merged_confs, merged_classes = merge_touching_boxes(all_boxes, all_confs, all_classes) 
+        # Merge duplicate boxes that are touching
+        merged_boxes, merged_confs, merged_classes = merge_touching_boxes(all_boxes, all_confs, all_classes)
+        
+        detections = []
         for idx, (box, conf, cls) in enumerate(zip(merged_boxes, merged_confs, merged_classes)):
             x1, y1, x2, y2 = map(int, box)
             cls_id = int(cls)
-            label = model.names[cls_id]
-
+            
             # Calculate current center coordinates
             x_center = int((x1 + x2) / 2)
             y_center = int((y1 + y2) / 2 )
-            center_coords = np.array([x_center, y_center])
+            detections.append((x_center, y_center))
 
             # Drawing a dot where the computed center is.
-            cv2.circle(frame, (x_center, y_center), 8, (0, 0, 255), -1)
-
-            # Calculate distances from center to left and right wrist.
-            # Save in Stick Tracker
-            stick_tracker.determine_tip_distances(
-                left_wrist_coords=left_wrist_coords, 
-                right_wrist_coords=right_wrist_coords, 
-                center_coords=center_coords,
-                idx=idx
-            )
+            cv2.circle(frame, (x_center, y_center), 16, (0, 0, 255), -1)
 
             # Distance save
             distance_from_top[frame_count][cls_id] = y_center
-            
-       # Get box indices for left and right drumsticks. This will correspond to the merged boxes, 
-       # letting us know which boxes are closest to which wrist.
-        left_index, right_index = stick_tracker.get_min_distances()
 
-        if left_index is None and right_index is None:
-            continue
+        tip_tracker.update(detections)
+        hits = tip_tracker.detect_hits()
 
-        # If same box is closest to both wrists, assign to the closer one
-        if left_index == right_index:
-            left_dist, right_dist, center_x, center_y = stick_tracker.get_distances(left_index)
-            tip = StickTip.LEFT if left_dist <= right_dist else StickTip.RIGHT
-            color = COLOR_LEFT if left_dist <= right_dist else COLOR_RIGHT
-            frame = annotate_bounding_box(frame, merged_boxes[left_index], StickTip(tip).name, 
-                                        merged_confs[left_index], np.inf, color)
-            # Update respective Kalman Filter
-            velocity_tracker.update(tip=tip, xy=(center_x, center_y))
-            frame = velocity_tracker.annotate_direction(frame, tip=tip, color=color, frame_idx=frame_count)
+        if hits:
+            timestamps.append(frame_count/fps)
 
-        else:
-            # Annotate both drumsticks
-            frame = annotate_bounding_box(frame, merged_boxes[left_index], "left", 
-                                        merged_confs[left_index], 0, (0, 255, 0))
-            frame = annotate_bounding_box(frame, merged_boxes[right_index], "right", 
-                                        merged_confs[right_index], 0, (0, 0, 255))
-            
-            # Update KF for both left and right drumsticks
-            left_dist, right_dist, center_x, center_y = stick_tracker.get_distances(left_index)
-            velocity_tracker.update(tip=StickTip.LEFT, xy=(center_x, center_y))
-            frame = velocity_tracker.annotate_direction(frame, tip=StickTip.LEFT, color=COLOR_LEFT, frame_idx=frame_count)
+        # Annotate KF information on screen
+        annotator.annotate_trackers(tip_tracker.trackers, hits)
+        # Annotate boxes and confidences on screen
+        annotator.annotate_bounding_boxes(merged_boxes, merged_confs)
 
-            left_dist, right_dist, center_x, center_y = stick_tracker.get_distances(right_index)
-            velocity_tracker.update(tip=StickTip.RIGHT, xy=(center_x, center_y))
-            frame = velocity_tracker.annotate_direction(frame, tip=StickTip.RIGHT, color=COLOR_RIGHT, frame_idx=frame_count)
-        
-        velocity_tracker.predict()
+        annotator.annotate_time(frame_count/fps)
+
+        frame = annotator.get_frame()
         
         # --- 3. Display and Exit (Unchanged) ---
         cv2.imshow("YOLOv8 Live", frame)
         frame_count += 1
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        key = cv2.waitKey(0)
+        if  key == ord('q'):
             break
+        elif  key == ord('n'):
+            continue
 
 
     cap.release()
     cv2.destroyAllWindows()
 
-    hit_timestamps = velocity_tracker.get_hit_timestamps()
     # Run transcription
     transcribe(data=distance_from_top)
 
 if __name__ == "__main__":
-    inference()
+
+    with open('PATH', 'r') as file:
+        config = yaml.safe_load(file)
+
+    inference(config)

@@ -1,25 +1,33 @@
 import cv2
 import numpy as np
+from collections import deque
 
 class KalmanTracker:
     _id = 0
     def __init__(self, init_xy, dt=1.0):
-        # 4 state: x, y, vx, vy | 2 measurements: x, y
-        self.kf = cv2.KalmanFilter(4, 2)
-        self.kf.transitionMatrix = np.array([[1,0,dt,0],
-                                             [0,1,0,dt],
-                                             [0,0,1,0],
-                                             [0,0,0,1]], dtype=np.float32)
-        self.kf.measurementMatrix = np.array([[1,0,0,0],
-                                              [0,1,0,0]], dtype=np.float32)
+        self.kf = cv2.KalmanFilter(6, 2)
+        
+        self.kf.transitionMatrix = np.array([
+            [1, 0, dt, 0, 0.5*dt*dt, 0],
+            [0, 1, 0, dt, 0, 0.5*dt*dt],
+            [0, 0, 1, 0, dt, 0],
+            [0, 0, 0, 1, 0, dt],
+            [0, 0, 0, 0, 1, 0],
+            [0, 0, 0, 0, 0, 1]
+        ], dtype=np.float32)
+        self.kf.measurementMatrix = np.array([
+            [1, 0, 0, 0, 0, 0],
+            [0, 1, 0, 0, 0, 0]
+        ], dtype=np.float32)
+
         # tune process/measurement noise
-        self.kf.processNoiseCov = np.eye(4, dtype=np.float32) * 1
+        self.kf.processNoiseCov = np.eye(6, dtype=np.float32) * 1
         self.kf.measurementNoiseCov = np.eye(2, dtype=np.float32) * 1.0
 
         # initial state
         x, y = float(init_xy[0]), float(init_xy[1])
-        self.kf.statePre = np.array([[x], [y], [0.], [0.]], dtype=np.float32)
-        self.kf.statePost = np.array([[x], [y], [0.], [0.]], dtype=np.float32)
+        self.kf.statePre = np.array([[x], [y], [0.], [0.], [0.], [0.]], dtype=np.float32)
+        self.kf.statePost = np.array([[x], [y], [0.], [0.], [0.], [0.]], dtype=np.float32)
 
         self.id = KalmanTracker._id
         KalmanTracker._id += 1
@@ -27,16 +35,18 @@ class KalmanTracker:
         self.time_since_update = 0
         self.age = 0
         self.hits = 1
-        self.history = []  # store last positions
+        self.max_history = 5
+        self.history = deque([], maxlen=30)
+        self.velocity_history = deque([], maxlen=self.max_history)
+        self.acceleration_history = deque([], maxlen=self.max_history)
+        self.cooldown = 0
+        
 
     def predict(self):
         pred = self.kf.predict()
         self.age += 1
         self.time_since_update += 1
         px, py = float(pred[0]), float(pred[1])
-        self.history.append((px, py))
-        if len(self.history) > 30:
-            self.history.pop(0)
         return (px, py)
 
     def update(self, meas_xy):
@@ -47,12 +57,18 @@ class KalmanTracker:
         px, py = float(corrected[0]), float(corrected[1])
         if len(self.history) == 0 or (px,py) != self.history[-1]:
             self.history.append((px,py))
+
+        _, _, vx, vy, ax, ay = self.get_state()
+        if len(self.velocity_history) == 0 or (vx, vy) != self.velocity_history[-1]:
+            self.velocity_history.append((vx, vy))
+        if len(self.acceleration_history) == 0 or (ax, ay) != self.acceleration_history[-1]:
+            self.acceleration_history.append((ax, ay))
+
         return (px, py)
 
     def get_state(self):
-        # returns x, y, vx, vy
         s = self.kf.statePost.flatten()
-        return float(s[0]), float(s[1]), float(s[2]), float(s[3])
+        return float(s[0]), float(s[1]), float(s[2]), float(s[3]), float(s[4]), float(s[5])
     
     def get_velocity(self):
         vx, vy = self.kf.statePost[2], self.kf.statePost[3]
@@ -61,77 +77,56 @@ class KalmanTracker:
     def get_position(self):
         x, y = self.kf.statePost[0], self.kf.statePost[1]
         return float(x), float(y)
+    
+    def get_acceleration(self):
+        ax, ay = self.kf.statePost[4], self.kf.statePost[5]
+        return float(ax), float(ay)
+    
+    def decrement_cooldown(self):
+        if self.cooldown > 0:
+            self.cooldown -= 1
+        return (self.cooldown == 0)
+    
+    def set_cooldown(self):
+        self.cooldown = self.max_history
 
+    
+    def detect_hit(
+        self,
+        vel_threshold: float = 50.0,
+        acc_threshold: float = 20.0,
+        min_hist = 2
+    ) -> bool:
+        # Decrement the cooldown 
+        if not self.decrement_cooldown():
+            return False
+        
+        # Check if there is a long enough history to even know if a detection happened
+        if len(self.velocity_history)  < min_hist and len(self.acceleration_history) < min_hist:
+            return False
+        
+        vel_hist = np.array(self.velocity_history)
+        acc_hist = np.array(self.acceleration_history)
 
-# -------------------- MultiTracker manager --------------------
-class MultiTracker:
-    def __init__(self, dist_thresh=60.0, max_age=6):
-        self.trackers = []
-        self.dist_thresh = dist_thresh
-        self.max_age = max_age
+        # Get the 4 previous velocities in the y direction. 
+        vy = vel_hist[:, 1]
+        vy_prev = vy[:-1]
+        # Get the current velocity
+        vy_curr = vy[-1]  
+        # print(f"trace: {self.id}: -- v: {vy}")
 
-    def predict(self):
-        preds = []
-        for t in self.trackers:
-            preds.append(t.predict())
-        return preds
+        # Check the current velocity is going up and which ones in the previous were going down
+        condition = (vy_curr < 0) & (vy_prev > 0)
+        if not np.any(condition):
+            return False
+        
+        # Check if the diff is greater than the threshold
+        delta_vy = np.abs(vy_prev[condition] - vy_curr)
 
-    def update(self, detections):
-        """
-        detections: list of (x, y) tuples (raw measurements)
-        """
-        dets = [np.array(d) for d in detections]
-        N = len(self.trackers)
-        M = len(dets)
+        # Hit Detected, set cooldown
+        if np.max(delta_vy) > vel_threshold:
+            self.set_cooldown()
+            print(f"Hit Detected! Delta:{delta_vy}")
+            return True
 
-        # if no existing trackers -> spawn trackers for all detections
-        if N == 0:
-            for d in dets:
-                self.trackers.append(KalmanTracker(d))
-            return
-
-        # build cost matrix between tracker predictions and detections
-        preds = [np.array([t.kf.statePre[0,0], t.kf.statePre[1,0]]) for t in self.trackers]
-        cost = np.full((N, M), np.inf, dtype=float)
-        for i, p in enumerate(preds):
-            for j, d in enumerate(dets):
-                cost[i, j] = np.linalg.norm(p - d)
-
-        # greedy matching: pick smallest cost pair while < threshold
-        matched_tr = set()
-        matched_det = set()
-        cost_copy = cost.copy()
-        while True:
-            idx = np.unravel_index(np.argmin(cost_copy), cost_copy.shape)
-            i, j = idx
-            if cost_copy[i, j] == np.inf or cost_copy[i, j] > self.dist_thresh:
-                break
-            # assign
-            self.trackers[i].update(dets[j])
-            matched_tr.add(i)
-            matched_det.add(j)
-            # invalidate row/col
-            cost_copy[i, :] = np.inf
-            cost_copy[:, j] = np.inf
-
-        # unmatched detections -> create new trackers
-        for j in range(M):
-            if j not in matched_det:
-                self.trackers.append(KalmanTracker(dets[j]))
-
-        # increment time_since_update for unmatched trackers and remove old ones
-        to_remove = []
-        for i, t in enumerate(self.trackers):
-            if i not in matched_tr:
-                t.time_since_update += 1
-            if t.time_since_update > self.max_age:
-                to_remove.append(t)
-        for t in to_remove:
-            self.trackers.remove(t)
-
-    def get_tracks(self):
-        out = []
-        for t in self.trackers:
-            x, y, vx, vy = t.get_state()
-            out.append({'id': t.id, 'xy': (x,y), 'vxvy': (vx,vy), 'color': t.color, 'history': t.history})
-        return out
+        return False
