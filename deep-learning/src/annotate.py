@@ -70,7 +70,7 @@ class Annotator:
             self.annotate_bounding_box(bounding_box=box, conf=conf)
 
     def annotate_hit(self, px, py) -> None:
-        cv2.putText(self.frame, "HIT!", (int(px) - 20, int(py) - 30),
+        cv2.putText(self.frame, "HIT!", (int(px) + 30, int(py) + 50),
             cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 3)
         
     

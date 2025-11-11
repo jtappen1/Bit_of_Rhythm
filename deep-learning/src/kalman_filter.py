@@ -35,7 +35,8 @@ class KalmanTracker:
         self.time_since_update = 0
         self.age = 0
         self.hits = 1
-        self.max_history = 5
+
+        self.max_history = 8
         self.history = deque([], maxlen=30)
         self.velocity_history = deque([], maxlen=self.max_history)
         self.acceleration_history = deque([], maxlen=self.max_history)
@@ -58,7 +59,8 @@ class KalmanTracker:
         if len(self.history) == 0 or (px,py) != self.history[-1]:
             self.history.append((px,py))
 
-        _, _, vx, vy, ax, ay = self.get_state()
+        vx, vy = self.get_velocity()
+        ax, ay = self.get_acceleration()
         if len(self.velocity_history) == 0 or (vx, vy) != self.velocity_history[-1]:
             self.velocity_history.append((vx, vy))
         if len(self.acceleration_history) == 0 or (ax, ay) != self.acceleration_history[-1]:
@@ -88,45 +90,59 @@ class KalmanTracker:
         return (self.cooldown == 0)
     
     def set_cooldown(self):
-        self.cooldown = self.max_history
-
+        self.cooldown = self.max_history + 1
     
     def detect_hit(
         self,
-        vel_threshold: float = 50.0,
+        vel_threshold: float = 40.0,
         acc_threshold: float = 20.0,
         min_hist = 2
-    ) -> bool:
+    ) -> tuple[bool, int]:
         # Decrement the cooldown 
         if not self.decrement_cooldown():
-            return False
+            return False, 0
         
         # Check if there is a long enough history to even know if a detection happened
         if len(self.velocity_history)  < min_hist and len(self.acceleration_history) < min_hist:
-            return False
+            return False, 0
         
         vel_hist = np.array(self.velocity_history)
-        acc_hist = np.array(self.acceleration_history)
 
-        # Get the 4 previous velocities in the y direction. 
+        # Get the previous velocities in the y direction. 
         vy = vel_hist[:, 1]
         vy_prev = vy[:-1]
         # Get the current velocity
         vy_curr = vy[-1]  
-        # print(f"trace: {self.id}: -- v: {vy}")
 
         # Check the current velocity is going up and which ones in the previous were going down
         condition = (vy_curr < 0) & (vy_prev > 0)
         if not np.any(condition):
-            return False
+            return False, 0
         
         # Check if the diff is greater than the threshold
         delta_vy = np.abs(vy_prev[condition] - vy_curr)
 
+        print(f"Trace {self.id}--{delta_vy} -- {vy}")
+
+
         # Hit Detected, set cooldown
         if np.max(delta_vy) > vel_threshold:
-            self.set_cooldown()
-            print(f"Hit Detected! Delta:{delta_vy}")
-            return True
+            if np.all(vy[-3:] < 0) and np.any(vy_prev > 0):
 
-        return False
+                signs = np.sign(vy)
+                # Detect where sign changes between consecutive elements
+                sign_change_mask = np.diff(signs) != 0
+
+                # Get indices where sign changes occur (index of element *before* the change)
+                sign_change_indices = np.where(sign_change_mask)[0]
+                print(f"Sign Changes{sign_change_indices}")
+                print(f"Diff = {self.max_history - sign_change_indices[0]}")
+                      
+
+                self.set_cooldown()
+                print(f"Hit Detected! Delta:{delta_vy}")
+                return True, self.max_history - sign_change_indices[0]
+            else:
+                print("FAILED SECOND")
+
+        return False, 0

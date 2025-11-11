@@ -212,12 +212,12 @@ class TipTracker:
     - Add minimum aging.
     - Determine distance thresholds
 
-
     """
-    def __init__(self, dist_thresh=400.0, max_age=10, min_age=3):
+    def __init__(self, dist_thresh=100.0, max_age=20, min_age=3):
         self.trackers = []
         self.dist_thresh = dist_thresh
         self.max_age = max_age
+        self.min_age = min_age
 
     def predict(self):
         """
@@ -278,7 +278,8 @@ class TipTracker:
     def detect_hits(self):
         hits = set()
         for tracker in self.trackers:
-            if tracker.detect_hit():
-                hits.add(tracker.id)
+            valid, idx = tracker.detect_hit()
+            if valid:
+                hits.add((tracker.id, idx))
         return hits
 

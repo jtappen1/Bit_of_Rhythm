@@ -1,4 +1,6 @@
+from collections import deque
 import os
+import time
 import cv2
 import numpy as np
 from ultralytics import YOLO
@@ -135,7 +137,7 @@ def inference(config):
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
 
-    tip_tracker = TipTracker()
+    tip_tracker = TipTracker(dist_thresh=config['dist_thresh'], max_age=config['max_age'])
     annotator = Annotator()
     timestamps = []
     
@@ -144,6 +146,8 @@ def inference(config):
 
     # For each frame, store [left_stick_y, right_stick_y]
     distance_from_top = np.zeros(shape=(total_frame_count, 2))
+
+    previous_frames = deque(maxlen=8)
 
     while True:
         ret, frame = cap.read()
@@ -195,8 +199,10 @@ def inference(config):
         tip_tracker.update(detections)
         hits = tip_tracker.detect_hits()
 
-        if hits:
-            timestamps.append(frame_count/fps)
+        for _, idx in hits:
+            timestamps.append(frame_count - idx/fps)
+            print(idx)
+            cv2.imshow("Hit Detected", previous_frames[7-idx])
 
         # Annotate KF information on screen
         annotator.annotate_trackers(tip_tracker.trackers, hits)
@@ -210,6 +216,7 @@ def inference(config):
         # --- 3. Display and Exit (Unchanged) ---
         cv2.imshow("YOLOv8 Live", frame)
         frame_count += 1
+        previous_frames.append(frame)
 
         key = cv2.waitKey(0)
         if  key == ord('q'):
