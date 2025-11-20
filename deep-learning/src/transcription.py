@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import math
+from music21 import stream, note, tempo, meter
 
 def transcribe(data : np.ndarray, numerator : int, denominator : int) -> np.ndarray:
     '''
@@ -9,7 +10,7 @@ def transcribe(data : np.ndarray, numerator : int, denominator : int) -> np.ndar
     Parameters
     ------------
     data : ndarray 
-        A 1-D array of *numpy.datetime64* objects denoting the time stamp of every stick hit throughout the video
+        A 1-D array of floats, denoting the time stamp of every stick hit throughout the video
     numerator : int
         The top value in the time signature
     denominator : int
@@ -20,48 +21,44 @@ def transcribe(data : np.ndarray, numerator : int, denominator : int) -> np.ndar
 
     # Player should play one measure's worth of initialization notes at the beginning of the video
     # Use the initialization measure to get timing information
-    measure_length = data[numerator] - data[0]
+    measure_length = (data[1] - data[0]) * denominator
+
+    BPM = (int)((numerator / measure_length) * 60)
+    T_beat = 60.0 / BPM
+    TIME_SIG = numerator + '/' + denominator
+    # I think a reasonable granularity to use for rhythm search is 2^(log2(denominator) + 2)
+    # So 3/4 would be searching at a granularity of 2^(log2(4) + 2) = 2^4 = 16th notes
+    # I am capping the granularity at 16th notes for simplicity sake
+    SUBDIVISIONS_PER_BEAT = min(16, pow(2, (np.log2(denominator) + 2)))
+    grid_unit = T_beat / SUBDIVISIONS_PER_BEAT
 
     # Drop the first measure 
     data = data[numerator:]
-    num_measures = math.ceil((data[-1] - data[0]) / measure_length)
 
-    notes_per_measure = np.empty(shape=(num_measures), dtype=object)
-    for measure in range(num_measures):
-        # Get all of the hits in the time range for this measure. Stored in current_measure
-        # TODO: CHANGE THIS LOGIC TO ACCOMODATE THE TIMESTAMP DATASTRUCTURE
-        bottom_range = data[0] + measure * measure_length
-        top_range = bottom_range + measure_length
-        mask = (data >= bottom_range) & (data < top_range)
-        current_measure = data[mask]
+    grid_positions = data / grid_unit
+    quantized_positions = np.round(grid_positions).astype(int)
+    unique_quantized_positions = np.unique(quantized_positions)
+    unique_quantized_positions = unique_quantized_positions[unique_quantized_positions >= 0]
 
-        # I think a reasonable granularity to use for rhythm search is 2^(log2(denominator) + 2)
-        # So 6/8 would be searching at a granularity of 2^(log2(8) + 2) = 2^5 = 32nd notes
-        # Likewise, anything __/4 time signature would be searching 16th notes
-        granularity = pow(2, (np.log2(denominator) + 2))
-        num_timestamps = granularity + 1
+    score = stream.Score()
+    part = stream.Part()
+    measure = stream.Measure()
 
-        bottom_range_int = bottom_range.astype('datetime64[ns]').astype(np.int64)
-        top_range_int = top_range.astype('datetime64[ns]').astype(np.int64)
+    score.insert(tempo.MetronomeMark(number=BPM))
+    measure.append(meter.TimeSignature(TIME_SIG))
+    part.append(measure)
 
-        time_array_int = np.linspace(
-            bottom_range_int, 
-            top_range_int, 
-            num=num_timestamps,
-            dtype=np.int64
-        )
-        # convert the integer array back to datetime64[ns]
-        time_array = time_array_int.astype('datetime64[ns]')
-
-        current_measure_int = current_measure.astype('datetime64[ns]').astype(np.int64)
-        bins = np.digitize(current_measure_int, time_array_int)
-
-        # 1 if any element falls in bin [time_array[i], time_array[i+1])
-        binary_array = np.zeros(len(time_array) - 1, dtype=int)
-        for i in range(len(time_array) - 1):
-            binary_array[i] = np.any((bins == i + 1))
+    # Iterate through the quantized indices to create musical notes
+    for index in unique_quantized_positions:
         
-        notes_per_measure[measure] = binary_array
-        return notes_per_measure
+        granularity = 1/SUBDIVISIONS_PER_BEAT
+        offset_in_beats = index * granularity
+        
+        drum_note = note.Note('C4', type='16th') 
+        drum_note.midi = 38 # Standard MIDI for Snare Drum
+        
+        # Insert the note at the calculated offset (Bar | Beat | Subdivision)
+        part.insert(offset_in_beats, drum_note)
 
-transcribe(np.array([1,2,3,4,5,6]),2,1)
+    score.insert(0, part)
+    score.show()

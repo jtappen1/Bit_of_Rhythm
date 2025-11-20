@@ -9,6 +9,9 @@ from annotate import Annotator
 import yaml
 from trackers import TipTracker
 from transcription import transcribe
+import tkinter as tk
+from tkinter import filedialog, messagebox
+import math
 
 COLOR_RIGHT = (0,0,255)
 COLOR_LEFT = (0,255,0)
@@ -30,6 +33,142 @@ def select_video_file():
         )
     )
     return file_path
+
+class VideoUploadGUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Video Upload with Fraction")
+        self.root.geometry("500x300")
+        self.root.resizable(False, False)
+        
+        self.video_path = None
+        
+        # Create main frame
+        main_frame = tk.Frame(root, padx=20, pady=20)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Numerator field
+        tk.Label(main_frame, text="Numerator (positive integer):", font=("Arial", 10)).grid(
+            row=0, column=0, sticky="w", pady=10
+        )
+        self.numerator_entry = tk.Entry(main_frame, width=30, font=("Arial", 10))
+        self.numerator_entry.grid(row=0, column=1, pady=10, padx=10)
+        
+        # Denominator field
+        tk.Label(main_frame, text="Denominator (power of 2, >= 2):", font=("Arial", 10)).grid(
+            row=1, column=0, sticky="w", pady=10
+        )
+        self.denominator_entry = tk.Entry(main_frame, width=30, font=("Arial", 10))
+        self.denominator_entry.grid(row=1, column=1, pady=10, padx=10)
+        
+        # Upload video button
+        self.upload_btn = tk.Button(
+            main_frame, 
+            text="Upload Video", 
+            command=self.upload_video,
+            font=("Arial", 10),
+            bg="#4CAF50",
+            fg="white",
+            padx=20,
+            pady=5
+        )
+        self.upload_btn.grid(row=2, column=0, columnspan=2, pady=20)
+        
+        # Video path label
+        self.video_label = tk.Label(
+            main_frame, 
+            text="No video selected", 
+            font=("Arial", 9),
+            fg="gray"
+        )
+        self.video_label.grid(row=3, column=0, columnspan=2, pady=5)
+        
+        # Submit button
+        self.submit_btn = tk.Button(
+            main_frame,
+            text="Submit",
+            command=self.submit,
+            font=("Arial", 11, "bold"),
+            bg="#2196F3",
+            fg="white",
+            padx=30,
+            pady=10,
+            state=tk.DISABLED
+        )
+        self.submit_btn.grid(row=4, column=0, columnspan=2, pady=20)
+        
+        # Bind entry changes to validation
+        self.numerator_entry.bind("<KeyRelease>", lambda e: self.check_submit_enabled())
+        self.denominator_entry.bind("<KeyRelease>", lambda e: self.check_submit_enabled())
+    
+    def is_power_of_two(self, n):
+        """Check if n is a positive power of 2"""
+        if n <= 0:
+            return False
+        return (n & (n - 1)) == 0
+    
+    def validate_numerator(self):
+        """Validate that numerator is a positive integer"""
+        try:
+            value = int(self.numerator_entry.get())
+            return value > 0
+        except ValueError:
+            return False
+    
+    def validate_denominator(self):
+        """Validate that denominator is a positive power of 2"""
+        try:
+            value = int(self.denominator_entry.get())
+            return self.is_power_of_two(value) and value >= 2
+        except ValueError:
+            return False
+    
+    def check_submit_enabled(self):
+        """Enable submit button only if all conditions are met"""
+        if (self.video_path and 
+            self.numerator_entry.get() and 
+            self.denominator_entry.get()):
+            self.submit_btn.config(state=tk.NORMAL)
+        else:
+            self.submit_btn.config(state=tk.DISABLED)
+    
+    def upload_video(self):
+        """Handle video upload button click"""
+        file_path = select_video_file()
+        if file_path:
+            self.video_path = file_path
+            # Truncate path if too long for display
+            display_path = file_path if len(file_path) < 50 else "..." + file_path[-47:]
+            self.video_label.config(text=display_path, fg="green")
+            self.check_submit_enabled()
+    
+    def submit(self):
+        """Handle submit button click"""
+        # Validate inputs
+        if not self.validate_numerator():
+            messagebox.showerror(
+                "Invalid Input", 
+                "Numerator must be a positive integer!"
+            )
+            return
+        
+        if not self.validate_denominator():
+            messagebox.showerror(
+                "Invalid Input", 
+                "Denominator must be a positive power of 2 (e.g., 1, 2, 4, 8, 16, ...)!"
+            )
+            return
+        
+        # Get values
+        numerator = int(self.numerator_entry.get())
+        denominator = int(self.denominator_entry.get())
+        video_path = self.video_path
+        
+        # Store result
+        self.result = (numerator, denominator, video_path)
+        
+        # Close the window
+        self.root.destroy()
 
 def merge_touching_boxes(boxes, confs=None, classes=None):
     """
@@ -114,7 +253,7 @@ def merge_touching_boxes(boxes, confs=None, classes=None):
 
     return merged_boxes, merged_confs, merged_classes
 
-def inference(config):
+def inference(config, video_path) -> np.ndarray:
     """
     Main inference loop for drumstick detection and tracking.
     
@@ -133,7 +272,6 @@ def inference(config):
     
     model = YOLO("PATH")
 
-    video_path = select_video_file()
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
 
@@ -223,17 +361,28 @@ def inference(config):
             break
         elif  key == ord('n'):
             continue
-
+        
 
     cap.release()
     cv2.destroyAllWindows()
 
-    # Run transcription
-    transcribe(data=distance_from_top)
+    # TODO: Return the drumstrick hits as a numpy array of time values np.array([1.2, 1.27, 2.2,.... etc])
+    return np.empty(shape=(1,))
 
 if __name__ == "__main__":
+    root = tk.Tk()
+    app = VideoUploadGUI(root)
+    root.mainloop()
+    if app.result:
+        numerator, denominator, video_path = app.result
 
-    with open('PATH', 'r') as file:
-        config = yaml.safe_load(file)
+        with open('PATH', 'r') as file:
+            config = yaml.safe_load(file)
+        hits = inference(config, video_path)
 
-    inference(config)
+        # Transcription time
+        transcribe(hits, numerator, denominator)
+    else : 
+        raise ValueError("Improper values submitted. Please re-run and try again")
+
+    
