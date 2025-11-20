@@ -4,7 +4,7 @@ from collections import deque
 
 class KalmanTracker:
     _id = 0
-    def __init__(self, init_xy, dt=1.0):
+    def __init__(self, init_xy, dt=1.0, debug: bool = False):
         self.kf = cv2.KalmanFilter(6, 2)
         
         self.kf.transitionMatrix = np.array([
@@ -41,6 +41,7 @@ class KalmanTracker:
         self.velocity_history = deque([], maxlen=self.max_history)
         self.acceleration_history = deque([], maxlen=self.max_history)
         self.cooldown = 0
+        self.debug = debug
         
 
     def predict(self):
@@ -122,7 +123,8 @@ class KalmanTracker:
         # Check if the diff is greater than the threshold
         delta_vy = np.abs(vy_prev[condition] - vy_curr)
 
-        print(f"Trace {self.id}--{delta_vy} -- {vy}")
+        if self.debug:
+            print(f"Trace {self.id}--{delta_vy} -- {vy}")
 
 
         # Hit Detected, set cooldown
@@ -135,14 +137,16 @@ class KalmanTracker:
 
                 # Get indices where sign changes occur (index of element *before* the change)
                 sign_change_indices = np.where(sign_change_mask)[0]
-                print(f"Sign Changes{sign_change_indices}")
-                print(f"Diff = {self.max_history - sign_change_indices[0]}")
+                if self.debug:
+                    print(f"Sign Changes{sign_change_indices}")
+                    print(f"Diff = {self.max_history - sign_change_indices[0]}")
+                    print(f"Hit Detected! Delta:{delta_vy}")
                       
 
                 self.set_cooldown()
-                print(f"Hit Detected! Delta:{delta_vy}")
                 return True, self.max_history - sign_change_indices[0]
             else:
-                print("FAILED SECOND")
+                if self.debug:
+                    print("FAILED SECOND")
 
         return False, 0

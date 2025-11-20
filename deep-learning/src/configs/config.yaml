@@ -3,11 +3,15 @@ min_confidence : 0.6
 
 # ------- Tip Tracker Config --------
 # Maximum distance between points to be counted as part of a KF
-dist_thresh : 200
+dist_thresh : 400
 # Max stale age of KF
-max_age: 12
+max_age: 30
 # Min age before establishing a tracker
 min_age: 3
 
 # ------ Kalman Filter Configs ------
+
+
+#------- Debug Configs---------------
+visual_debug : false
 

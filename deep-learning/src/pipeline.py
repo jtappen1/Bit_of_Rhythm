@@ -270,12 +270,12 @@ def inference(config, video_path) -> np.ndarray:
         - Any other key: Next frame
     """
     
-    model = YOLO("PATH")
+    model = YOLO("/Users/jtappen/Projects/Bit_of_Rhythm/deep-learning/weights/final-weights/last.pt")
 
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
 
-    tip_tracker = TipTracker(dist_thresh=config['dist_thresh'], max_age=config['max_age'])
+    tip_tracker = TipTracker(dist_thresh=config['dist_thresh'], max_age=config['max_age'], debug=config['visual_debug'])
     annotator = Annotator()
     timestamps = []
     
@@ -339,28 +339,29 @@ def inference(config, video_path) -> np.ndarray:
 
         for _, idx in hits:
             timestamps.append(frame_count - idx/fps)
-            print(idx)
-            cv2.imshow("Hit Detected", previous_frames[7-idx])
+            if config['visual_debug']:
+                cv2.imshow("Hit Detected", previous_frames[7-idx])
 
-        # Annotate KF information on screen
-        annotator.annotate_trackers(tip_tracker.trackers, hits)
-        # Annotate boxes and confidences on screen
-        annotator.annotate_bounding_boxes(merged_boxes, merged_confs)
-
-        annotator.annotate_time(frame_count/fps)
-
-        frame = annotator.get_frame()
-        
         # --- 3. Display and Exit (Unchanged) ---
-        cv2.imshow("YOLOv8 Live", frame)
-        frame_count += 1
-        previous_frames.append(frame)
+        if config['visual_debug']:
+            # Annotate KF information on screen
+            annotator.annotate_trackers(tip_tracker.trackers, hits)
+            # Annotate boxes and confidences on screen
+            annotator.annotate_bounding_boxes(merged_boxes, merged_confs)
 
-        key = cv2.waitKey(0)
-        if  key == ord('q'):
-            break
-        elif  key == ord('n'):
-            continue
+            annotator.annotate_time(frame_count/fps)
+
+            frame = annotator.get_frame()
+
+            cv2.imshow("YOLOv8 Live", frame)
+            frame_count += 1
+            previous_frames.append(frame)
+
+            key = cv2.waitKey(0)
+            if  key == ord('q'):
+                break
+            elif  key == ord('n'):
+                continue
         
 
     cap.release()
@@ -376,7 +377,7 @@ if __name__ == "__main__":
     if app.result:
         numerator, denominator, video_path = app.result
 
-        with open('PATH', 'r') as file:
+        with open('/Users/jtappen/Projects/Bit_of_Rhythm/deep-learning/src/configs/config.yaml', 'r') as file:
             config = yaml.safe_load(file)
         hits = inference(config, video_path)
 
