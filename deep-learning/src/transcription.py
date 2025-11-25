@@ -25,7 +25,7 @@ def transcribe(data : np.ndarray, numerator : int, denominator : int) -> np.ndar
 
     BPM = (int)((numerator / measure_length) * 60)
     T_beat = 60.0 / BPM
-    TIME_SIG = numerator + '/' + denominator
+    TIME_SIG = str(numerator) + '/' + str(denominator)
     # I think a reasonable granularity to use for rhythm search is 2^(log2(denominator) + 2)
     # So 3/4 would be searching at a granularity of 2^(log2(4) + 2) = 2^4 = 16th notes
     # I am capping the granularity at 16th notes for simplicity sake

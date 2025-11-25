@@ -47,7 +47,7 @@ class Annotator:
     def annotate_trackers(self, trackers, hits) -> None:
         for t in trackers:
             px, py, vx, vy, _, _ = t.get_state()
-            pred_x , pred_y = t.predict()
+            pred_x , pred_y = 0,0
 
             if t.id in hits:
                 self.annotate_hit(px, py)     

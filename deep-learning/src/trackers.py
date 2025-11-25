@@ -213,11 +213,12 @@ class TipTracker:
     - Determine distance thresholds
 
     """
-    def __init__(self, dist_thresh=100.0, max_age=20, min_age=3):
+    def __init__(self, dist_thresh=100.0, max_age=20, min_age=3, debug=False):
         self.trackers = []
         self.dist_thresh = dist_thresh
         self.max_age = max_age
         self.min_age = min_age
+        self.debug = debug
 
     def predict(self):
         """
@@ -238,7 +239,7 @@ class TipTracker:
         # No existing trackers -> create new ones
         if N == 0:
             for d in dets:
-                self.trackers.append(KalmanTracker(d))
+                self.trackers.append(KalmanTracker(d, debug=self.debug))
             return
 
         # Build cost matrix (Euclidean distance)
@@ -278,6 +279,7 @@ class TipTracker:
     def detect_hits(self):
         hits = set()
         for tracker in self.trackers:
+            tracker.predict()
             valid, idx = tracker.detect_hit()
             if valid:
                 hits.add((tracker.id, idx))

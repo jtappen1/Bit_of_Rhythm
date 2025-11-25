@@ -42,7 +42,6 @@ class KalmanTracker:
         self.acceleration_history = deque([], maxlen=self.max_history)
         self.cooldown = 0
         self.debug = debug
-        
 
     def predict(self):
         pred = self.kf.predict()
@@ -102,7 +101,6 @@ class KalmanTracker:
         # Decrement the cooldown 
         if not self.decrement_cooldown():
             return False, 0
-        
         # Check if there is a long enough history to even know if a detection happened
         if len(self.velocity_history)  < min_hist and len(self.acceleration_history) < min_hist:
             return False, 0
@@ -141,8 +139,7 @@ class KalmanTracker:
                     print(f"Sign Changes{sign_change_indices}")
                     print(f"Diff = {self.max_history - sign_change_indices[0]}")
                     print(f"Hit Detected! Delta:{delta_vy}")
-                      
-
+                    
                 self.set_cooldown()
                 return True, self.max_history - sign_change_indices[0]
             else:

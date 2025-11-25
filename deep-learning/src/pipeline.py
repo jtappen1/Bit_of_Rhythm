@@ -328,9 +328,6 @@ def inference(config, video_path) -> np.ndarray:
             y_center = int((y1 + y2) / 2 )
             detections.append((x_center, y_center))
 
-            # Drawing a dot where the computed center is.
-            cv2.circle(frame, (x_center, y_center), 16, (0, 0, 255), -1)
-
             # Distance save
             distance_from_top[frame_count][cls_id] = y_center
 
@@ -338,9 +335,12 @@ def inference(config, video_path) -> np.ndarray:
         hits = tip_tracker.detect_hits()
 
         for _, idx in hits:
-            timestamps.append(frame_count - idx/fps)
+            timestamps.append((frame_count - idx)/fps)
             if config['visual_debug']:
                 cv2.imshow("Hit Detected", previous_frames[7-idx])
+        
+        frame_count += 1
+        print("frame_count:", frame_count, "total frame count:", total_frame_count)
 
         # --- 3. Display and Exit (Unchanged) ---
         if config['visual_debug']:
@@ -354,7 +354,7 @@ def inference(config, video_path) -> np.ndarray:
             frame = annotator.get_frame()
 
             cv2.imshow("YOLOv8 Live", frame)
-            frame_count += 1
+
             previous_frames.append(frame)
 
             key = cv2.waitKey(0)
@@ -366,9 +366,8 @@ def inference(config, video_path) -> np.ndarray:
 
     cap.release()
     cv2.destroyAllWindows()
-
-    # TODO: Return the drumstrick hits as a numpy array of time values np.array([1.2, 1.27, 2.2,.... etc])
-    return np.empty(shape=(1,))
+    print(f"FINAL Timestamps: {timestamps}")
+    return timestamps
 
 if __name__ == "__main__":
     root = tk.Tk()
