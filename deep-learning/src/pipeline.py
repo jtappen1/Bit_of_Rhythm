@@ -270,7 +270,7 @@ def inference(config, video_path) -> np.ndarray:
         - Any other key: Next frame
     """
     
-    model = YOLO("/Users/jtappen/Projects/Bit_of_Rhythm/deep-learning/weights/final-weights/last.pt")
+    model = YOLO("deep-learning/weights/final-weights/last.pt")
 
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -376,7 +376,7 @@ if __name__ == "__main__":
     if app.result:
         numerator, denominator, video_path = app.result
 
-        with open('/Users/jtappen/Projects/Bit_of_Rhythm/deep-learning/src/configs/config.yaml', 'r') as file:
+        with open('deep-learning/src/configs/config.yaml', 'r') as file:
             config = yaml.safe_load(file)
         hits = inference(config, video_path)
 
