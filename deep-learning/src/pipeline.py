@@ -340,7 +340,7 @@ def inference(config, video_path) -> np.ndarray:
                 cv2.imshow("Hit Detected", previous_frames[7-idx])
         
         frame_count += 1
-        print("frame_count:", frame_count, "total frame count:", total_frame_count)
+        # print("frame_count:", frame_count, "total frame count:", total_frame_count)
 
         # --- 3. Display and Exit (Unchanged) ---
         if config['visual_debug']:
@@ -367,6 +367,7 @@ def inference(config, video_path) -> np.ndarray:
     cap.release()
     cv2.destroyAllWindows()
     print(f"FINAL Timestamps: {timestamps}")
+    print(f"Detected {len(timestamps)} notes")
     return timestamps
 
 if __name__ == "__main__":
@@ -382,6 +383,7 @@ if __name__ == "__main__":
 
         # Transcription time
         transcribe(hits, numerator, denominator)
+        print("Finished Transcription")
     else : 
         raise ValueError("Improper values submitted. Please re-run and try again")
 
