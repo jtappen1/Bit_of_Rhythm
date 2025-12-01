@@ -338,6 +338,7 @@ def inference(config, video_path) -> np.ndarray:
             timestamps.append((frame_count - idx)/fps)
             if config['visual_debug']:
                 cv2.imshow("Hit Detected", previous_frames[7-idx])
+                print(f"Num Hits: {len(timestamps)}")
         
         frame_count += 1
         # print("frame_count:", frame_count, "total frame count:", total_frame_count)

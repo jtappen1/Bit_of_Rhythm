@@ -94,7 +94,7 @@ class KalmanTracker:
     
     def detect_hit(
         self,
-        vel_threshold: float = 40.0,
+        vel_threshold: float = 60.0,
         acc_threshold: float = 20.0,
         min_hist = 2
     ) -> tuple[bool, int]:
